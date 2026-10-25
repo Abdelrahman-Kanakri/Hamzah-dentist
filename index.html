@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dental Spin</title>
+  <meta name="description" content="Spin the wheel, get a random dental topic and question, then explain it out loud.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230e8f8a'/%3E%3Cpath d='M16 6v20M6 16h20' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <p class="eyebrow">Dental discussion wheel</p>
+    <h1>Spin. Think. Explain.</h1>
+    <p class="lede">Pick a difficulty, spin the wheel, and talk through the topic before you reveal the talking points.</p>
+  </header>
+
+  <main class="stage">
+    <section class="wheel-col" aria-label="Wheel">
+      <fieldset class="modes">
+        <legend class="sr-only">Difficulty</legend>
+        <label><input type="radio" name="mode" value="mixed" checked><span>Mixed</span></label>
+        <label><input type="radio" name="mode" value="g"><span>General</span></label>
+        <label><input type="radio" name="mode" value="s"><span>Specialized</span></label>
+        <label><input type="radio" name="mode" value="h"><span>Hard</span></label>
+      </fieldset>
+
+      <div class="wheel-wrap" id="wheelWrap">
+        <div class="pointer" aria-hidden="true"></div>
+        <svg class="rotor" id="rotor" viewBox="0 0 400 400" aria-hidden="true"></svg>
+        <button class="hub" id="spin" type="button">Spin</button>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Question">
+      <div class="idle" id="idle">
+        <p class="idle-title">Ready when you are.</p>
+        <p class="idle-sub">Spin the wheel to get a topic and a question.</p>
+      </div>
+
+      <article class="result" id="result" data-show="false" hidden>
+        <div class="meta">
+          <span class="topic" id="topic"></span>
+          <span class="badge" id="badge"></span>
+        </div>
+        <h2 class="question" id="question"></h2>
+
+        <div class="actions">
+          <button class="btn" id="toggle" type="button" aria-expanded="false" aria-controls="points">Show talking points</button>
+          <button class="btn ghost" id="timer" type="button">Start timer</button>
+        </div>
+
+        <ul class="points" id="points" hidden></ul>
+
+        <button class="btn primary again" id="again" type="button">Spin again</button>
+      </article>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="count">0 asked</span>
+    <button class="link" id="reset" type="button">Reset history</button>
+    <p class="note">Talking points are study prompts, not clinical guidance. Check current guidelines before relying on any figure.</p>
+  </footer>
+
+  <div class="sr-only" id="live" aria-live="polite"></div>
+
+  <script src="questions.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
