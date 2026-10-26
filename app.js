@@ -286,6 +286,7 @@
       const act = btn.dataset.act;
       if (act === 'spin') spin();
       else if (act === 'timer') openTimerOrToggle();
+      else if (act === 'mode') cycleMode();
       else if (act === 'info') toggleInfo();
       btn.blur();
     });
