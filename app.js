@@ -1,216 +1,299 @@
 (() => {
-  const TOPICS = window.TOPICS;
-  const N = TOPICS.length;
-  const SEG = 360 / N;
-  const TIER = { g: 'General', s: 'Specialized', h: 'Hard' };
-  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const ALL = window.TOPICS.map(([tier, en, ar]) => ({ tier, en, ar }));
+  const MODES = [
+    { key: 'all', label: 'All topics' },
+    { key: 'g', label: 'General' },
+    { key: 's', label: 'Specialized' },
+    { key: 'h', label: 'Hard' },
+  ];
+  const TIMER_MS = 30000;
+  const DANGER_AT = 7; // seconds left when the ring turns red
+  const RING_C = 2 * Math.PI * 88;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const $ = (id) => document.getElementById(id);
-  const rotor = $('rotor');
-  const spinBtn = $('spin');
-  const againBtn = $('again');
-  const idle = $('idle');
-  const result = $('result');
-  const pointsEl = $('points');
-  const toggleBtn = $('toggle');
-  const timerBtn = $('timer');
+  const box = $('box');
+  const strip = $('strip');
+  const status = $('status');
   const live = $('live');
+  const ring = $('ring');
+  const arc = $('arc');
+  const count = $('count');
+  const timerTopic = $('timerTopic');
+  const pauseBtn = $('pause');
+  const modePill = $('modePill');
 
-  // Flatten the bank and give every question a stable id.
-  const BANK = [];
-  TOPICS.forEach((topic, ti) => {
-    topic.q.forEach(([tier, text, pts], qi) => {
-      BANK.push({ id: `${ti}-${qi}`, ti, tier, text, pts });
-    });
-  });
-
-  const used = new Set();
-  let rotation = 0;
+  let modeIndex = 0;
+  let deck = [];
+  let last = null;       // last topic dealt
+  let shown = [];        // the three rows currently on screen
+  let current = null;    // the settled topic, if any
   let spinning = false;
-  let timerId = null;
-  let timerStart = 0;
+  let dealt = 0;
 
-  /* ---------- Wheel ---------- */
+  /* ---------- Deck: every topic once before any repeats ---------- */
 
-  const point = (r, deg) => {
-    const a = (deg * Math.PI) / 180;
-    return [200 + r * Math.sin(a), 200 - r * Math.cos(a)];
-  };
-
-  function buildWheel() {
-    TOPICS.forEach((topic, i) => {
-      const a0 = i * SEG;
-      const a1 = (i + 1) * SEG;
-      const [x0, y0] = point(190, a0);
-      const [x1, y1] = point(190, a1);
-
-      const path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', `M200 200 L${x0} ${y0} A190 190 0 0 1 ${x1} ${y1} Z`);
-      path.setAttribute('class', 'seg');
-      path.setAttribute('style', `--h:${topic.hue}`);
-      path.dataset.index = i;
-      rotor.appendChild(path);
-
-      // Radial label, flipped on the left half so it never reads upside down.
-      const mid = a0 + SEG / 2;
-      const flip = mid > 180;
-      const g = document.createElementNS(SVG_NS, 'g');
-      g.setAttribute('transform', `rotate(${flip ? mid + 90 : mid - 90} 200 200)`);
-      const text = document.createElementNS(SVG_NS, 'text');
-      text.setAttribute('class', 'seg-label');
-      text.setAttribute('style', `--h:${topic.hue}`);
-      text.setAttribute('dominant-baseline', 'central');
-      text.setAttribute('text-anchor', flip ? 'start' : 'end');
-      text.setAttribute('x', flip ? 200 - 172 : 200 + 172);
-      text.setAttribute('y', 200);
-      text.textContent = topic.name;
-      g.appendChild(text);
-      rotor.appendChild(g);
-    });
-
-    const rim = document.createElementNS(SVG_NS, 'circle');
-    rim.setAttribute('class', 'rim');
-    rim.setAttribute('cx', 200);
-    rim.setAttribute('cy', 200);
-    rim.setAttribute('r', 197);
-    rotor.appendChild(rim);
-  }
-
-  /* ---------- Picking ---------- */
-
-  const mode = () => document.querySelector('input[name="mode"]:checked').value;
-
+  const pool = () => ALL.filter((t) => MODES[modeIndex].key === 'all' || t.tier === MODES[modeIndex].key);
   const randomOf = (list) => list[Math.floor(Math.random() * list.length)];
 
-  // The wheel only lands on topics that still have unasked questions in this mode.
-  // Once everything in the mode has been asked, that mode's history starts over.
-  function pickQuestion() {
-    const m = mode();
-    const inScope = BANK.filter((q) => m === 'mixed' || q.tier === m);
-    let pool = inScope.filter((q) => !used.has(q.id));
-    if (!pool.length) {
-      inScope.forEach((q) => used.delete(q.id));
-      pool = inScope;
+  function shuffle(list) {
+    const a = list.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
     }
-    const topics = [...new Set(pool.map((q) => q.ti))];
-    const ti = randomOf(topics);
-    return randomOf(pool.filter((q) => q.ti === ti));
+    return a;
   }
 
-  /* ---------- Spin ---------- */
+  function refill() {
+    deck = shuffle(pool());
+    dealt = 0;
+    if (deck.length > 1 && deck[deck.length - 1] === last) deck.unshift(deck.pop());
+  }
+
+  function deal() {
+    if (!deck.length) refill();
+    dealt++;
+    return (last = deck.pop());
+  }
+
+  /* ---------- Reel ---------- */
+
+  function rowEl(t, isCurrent) {
+    const row = document.createElement('div');
+    row.className = 'row' + (isCurrent ? ' cur' : '');
+    const en = document.createElement('div');
+    en.className = 'en' + (t.en.length > 24 ? ' long' : '');
+    en.textContent = t.en;
+    const ar = document.createElement('div');
+    ar.className = 'ar';
+    ar.lang = 'ar';
+    ar.dir = 'rtl';
+    ar.textContent = t.ar;
+    row.append(en, ar);
+    return row;
+  }
+
+  function renderStatic(rows, centerIsCurrent) {
+    strip.style.transition = 'none';
+    strip.style.transform = 'translate3d(0,0,0)';
+    strip.replaceChildren(...rows.map((t, i) => rowEl(t, centerIsCurrent && i === 1)));
+    shown = rows;
+    void strip.offsetHeight;
+    strip.style.transition = '';
+  }
 
   function spin() {
     if (spinning) return;
     spinning = true;
-    spinBtn.disabled = true;
-    againBtn.disabled = true;
-    stopTimer(true);
+    closeInfo();
+    closeTimer();
 
-    result.dataset.show = 'false';
-    rotor.querySelectorAll('.seg.is-win').forEach((s) => s.classList.remove('is-win'));
+    const target = deal();
+    const others = pool().filter((t) => t !== target);
+    const fillers = reduceMotion.matches ? 3 : 32;
+    const rows = [
+      ...shown,
+      ...Array.from({ length: fillers }, () => randomOf(others)),
+      randomOf(others), target, randomOf(others),
+    ];
 
-    const question = pickQuestion();
-    const ti = question.ti;
-    used.add(question.id);
+    strip.style.transition = 'none';
+    strip.style.transform = 'translate3d(0,0,0)';
+    strip.replaceChildren(...rows.map((t) => rowEl(t, false)));
+    void strip.offsetHeight;
 
-    // Land the middle of segment `ti` under the pointer, with a little jitter inside the segment.
-    const jitter = (Math.random() - 0.5) * SEG * 0.7;
-    const landing = 360 - (ti + 0.5) * SEG + jitter;
-    const turns = reduceMotion.matches ? 1 : 5;
-    const base = rotation - (rotation % 360);
-    rotation = base + turns * 360 + landing;
-    if (rotation <= base + turns * 360) rotation += 360;
+    status.textContent = 'Shuffling…';
+    live.textContent = '';
 
-    const ms = reduceMotion.matches ? 500 : 4800;
-    rotor.style.transitionDuration = `${ms}ms`;
-    rotor.style.transform = `rotate(${rotation}deg)`;
+    const ms = reduceMotion.matches ? 350 : 5200;
+    const shift = ((rows.length - 3) / rows.length) * 100;
+    strip.style.transition = `transform ${ms}ms cubic-bezier(0.14, 0.8, 0.2, 1), filter 600ms cubic-bezier(0.23, 1, 0.32, 1)`;
+    if (!reduceMotion.matches) strip.classList.add('blur');
+    strip.style.transform = `translate3d(0, -${shift}%, 0)`;
+    const unblur = setTimeout(() => strip.classList.remove('blur'), ms * 0.55);
 
-    let finished = false;
+    let done = false;
     const finish = () => {
-      if (finished) return;
-      finished = true;
-      rotor.removeEventListener('transitionend', onEnd);
-      reveal(ti, question);
+      if (done) return;
+      done = true;
+      clearTimeout(unblur);
+      strip.removeEventListener('transitionend', onEnd);
+      strip.classList.remove('blur');
+      settle(rows.slice(-3), target);
     };
-    const onEnd = (e) => { if (e.propertyName === 'transform') finish(); };
-    rotor.addEventListener('transitionend', onEnd);
-    setTimeout(finish, ms + 250);
+    const onEnd = (e) => { if (e.target === strip && e.propertyName === 'transform') finish(); };
+    strip.addEventListener('transitionend', onEnd);
+    setTimeout(finish, ms + 300);
   }
 
-  function reveal(ti, q) {
-    rotor.querySelector(`.seg[data-index="${ti}"]`).classList.add('is-win');
-
-    $('topic').textContent = TOPICS[ti].name;
-    const badge = $('badge');
-    badge.textContent = TIER[q.tier];
-    badge.dataset.tier = q.tier;
-    $('question').textContent = q.text;
-
-    pointsEl.replaceChildren(...q.pts.map((p) => {
-      const li = document.createElement('li');
-      li.textContent = p;
-      return li;
-    }));
-    pointsEl.hidden = true;
-    toggleBtn.textContent = 'Show talking points';
-    toggleBtn.setAttribute('aria-expanded', 'false');
-
-    idle.hidden = true;
-    result.hidden = false;
-    void result.offsetWidth; // commit the hidden state so the entrance transitions
-    result.dataset.show = 'true';
-
-    live.textContent = `${TOPICS[ti].name}, ${TIER[q.tier]}: ${q.text}`;
-    updateCount();
-
+  function settle(lastThree, target) {
+    // Rebuild with just the three visible rows so the next spin continues from here.
+    renderStatic(lastThree, false);
+    current = target;
+    requestAnimationFrame(() => strip.children[1].classList.add('cur'));
+    status.textContent = `${dealt} of ${pool().length} this round`;
+    live.textContent = `${target.en}. ${target.ar}`;
     spinning = false;
-    spinBtn.disabled = false;
-    againBtn.disabled = false;
   }
 
-  /* ---------- Card controls ---------- */
+  /* ---------- Timer ---------- */
 
-  toggleBtn.addEventListener('click', () => {
-    const open = pointsEl.hidden;
-    pointsEl.hidden = !open;
-    toggleBtn.textContent = open ? 'Hide talking points' : 'Show talking points';
-    toggleBtn.setAttribute('aria-expanded', String(open));
-  });
+  let timer = { raf: 0, elapsed: 0, lastTs: 0, running: false, done: false };
 
-  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-
-  function stopTimer(clear) {
-    clearInterval(timerId);
-    timerId = null;
-    if (clear) timerBtn.textContent = 'Start timer';
+  function buildTicks() {
+    const g = $('ticks');
+    for (let i = 0; i < 12; i++) {
+      const a = (i * 30 * Math.PI) / 180;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('class', 'tick');
+      line.setAttribute('x1', 100 + 76 * Math.cos(a));
+      line.setAttribute('y1', 100 + 76 * Math.sin(a));
+      line.setAttribute('x2', 100 + 70 * Math.cos(a));
+      line.setAttribute('y2', 100 + 70 * Math.sin(a));
+      g.appendChild(line);
+    }
   }
 
-  timerBtn.addEventListener('click', () => {
-    if (timerId) { stopTimer(false); return; }
-    timerStart = Date.now();
-    timerBtn.textContent = '0:00';
-    timerId = setInterval(() => {
-      timerBtn.textContent = fmt(Math.floor((Date.now() - timerStart) / 1000));
-    }, 250);
-  });
-
-  againBtn.addEventListener('click', () => {
-    $('wheelWrap').scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'center' });
-    spin();
-  });
-
-  spinBtn.addEventListener('click', spin);
-
-  $('reset').addEventListener('click', () => {
-    used.clear();
-    updateCount();
-  });
-
-  function updateCount() {
-    $('count').textContent = `${used.size} of ${BANK.length} asked`;
+  function paintTimer() {
+    const left = Math.max(0, (TIMER_MS - timer.elapsed) / 1000);
+    count.textContent = String(Math.ceil(left));
+    arc.style.strokeDashoffset = String(RING_C * (timer.elapsed / TIMER_MS));
+    ring.dataset.state = timer.done ? 'done' : !timer.running ? 'paused' : left <= DANGER_AT ? 'danger' : 'run';
   }
 
-  buildWheel();
-  updateCount();
+  function tick(ts) {
+    if (!timer.running) return;
+    timer.elapsed += ts - timer.lastTs;
+    timer.lastTs = ts;
+    if (timer.elapsed >= TIMER_MS) {
+      timer.elapsed = TIMER_MS;
+      timer.running = false;
+      timer.done = true;
+      paintTimer();
+      pauseBtn.textContent = 'Pause';
+      live.textContent = 'Time is up';
+      return;
+    }
+    paintTimer();
+    timer.raf = requestAnimationFrame(tick);
+  }
+
+  function runTimer() {
+    timer.running = true;
+    timer.lastTs = performance.now();
+    pauseBtn.textContent = 'Pause';
+    timer.raf = requestAnimationFrame(tick);
+  }
+
+  function openTimer() {
+    if (spinning) return;
+    closeInfo();
+    timerTopic.textContent = current ? current.en : 'Timer';
+    cancelAnimationFrame(timer.raf);
+    timer = { raf: 0, elapsed: 0, lastTs: 0, running: false, done: false };
+    paintTimer();
+    box.dataset.view = 'timer';
+    $('viewTimer').inert = false;
+    $('viewReel').inert = true;
+    runTimer();
+  }
+
+  function closeTimer() {
+    cancelAnimationFrame(timer.raf);
+    timer.running = false;
+    if (box.dataset.view === 'timer') {
+      box.dataset.view = 'reel';
+      $('viewTimer').inert = true;
+      $('viewReel').inert = false;
+    }
+  }
+
+  function togglePause() {
+    if (timer.done) { openTimer(); return; }
+    if (timer.running) {
+      timer.running = false;
+      cancelAnimationFrame(timer.raf);
+      pauseBtn.textContent = 'Resume';
+      paintTimer();
+    } else {
+      runTimer();
+    }
+  }
+
+  const timerOpen = () => box.dataset.view === 'timer';
+
+  /* ---------- Info, mode ---------- */
+
+  function closeInfo() {
+    box.dataset.info = 'false';
+    $('info').inert = true;
+  }
+
+  function toggleInfo() {
+    const open = box.dataset.info !== 'true';
+    box.dataset.info = String(open);
+    $('info').inert = !open;
+  }
+
+  function cycleMode() {
+    modeIndex = (modeIndex + 1) % MODES.length;
+    modePill.textContent = MODES[modeIndex].label;
+    deck = [];
+    last = null;
+    refill();
+    status.textContent = `${pool().length} topics. Press space to shuffle`;
+  }
+
+  /* ---------- Input ---------- */
+
+  const isSpace = (e) => e.code === 'Space' || e.key === ' ';
+
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isSpace(e)) {
+      e.preventDefault();
+      if (!e.repeat) spin();
+      return;
+    }
+    if (e.repeat) return;
+    const k = e.key.toLowerCase();
+    if (k === 't') openTimerOrToggle();
+    else if (k === 'i') toggleInfo();
+    else if (k === 'm') cycleMode();
+    else if (k === 'r' && timerOpen()) openTimer();
+    else if (k === 'escape') { closeInfo(); closeTimer(); }
+    else if (k === 'enter' && document.activeElement === $('reel')) spin();
+  });
+
+  // Space activates a focused button on keyup; swallow it so a shuffle doesn't also click.
+  document.addEventListener('keyup', (e) => { if (isSpace(e)) e.preventDefault(); });
+
+  function openTimerOrToggle() {
+    if (timerOpen()) togglePause();
+    else openTimer();
+  }
+
+  $('reel').addEventListener('click', spin);
+  pauseBtn.addEventListener('click', togglePause);
+  $('restart').addEventListener('click', openTimer);
+  $('back').addEventListener('click', closeTimer);
+  modePill.addEventListener('click', cycleMode);
+  $('info').addEventListener('click', closeInfo);
+
+  document.querySelectorAll('.key').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const act = btn.dataset.act;
+      if (act === 'spin') spin();
+      else if (act === 'timer') openTimerOrToggle();
+      else if (act === 'info') toggleInfo();
+      btn.blur();
+    });
+  });
+
+  /* ---------- Init ---------- */
+
+  buildTicks();
+  refill();
+  renderStatic([randomOf(ALL), randomOf(ALL), randomOf(ALL)], false);
 })();
